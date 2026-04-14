@@ -1,0 +1,18 @@
+# 系统垃圾文件
+.DS_Store
+Thumbs.db
+# IDE 配置文件（比如VSCode、PyCharm）
+.vscode/
+.idea/
+# 依赖包（根据你的开发语言加，比如Python/Node.js）
+node_modules/
+venv/
+__pycache__/
+*.pyc
+# 日志/临时文件
+*.log
+temp/
+cache/
+# 编译/打包文件
+dist/
+build/
