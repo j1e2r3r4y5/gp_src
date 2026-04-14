@@ -3,10 +3,8 @@ package logic
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -22,60 +20,42 @@ import (
 type sToken struct {
 }
 
-var (
-	jwtSigningKey []byte
-	jwtKeyOnce    sync.Once
-)
-
 func init() {
+	// dao.Redis.Clear(context.TODO()) // 定期清理redis
 	service.RegisterToken(Newtoken())
-	jwtKeyOnce.Do(func() {
-		ctx := context.Background()
-		secret := g.Cfg().MustGet(ctx, "jwt.secret").String()
-		if secret == "" {
-			key := make([]byte, 32)
-			if _, err := rand.Read(key); err != nil {
-				g.Log().Fatal(ctx, "JWT密钥生成失败:", err)
-			}
-			secret = hex.EncodeToString(key)
-			g.Log().Warning(ctx, "未配置jwt.secret，已自动生成随机密钥（服务重启后Token将失效）")
-		}
-		if len(secret) < 32 {
-			g.Log().Fatal(ctx, "JWT密钥长度不足32字符，当前长度:", len(secret))
-		}
-		jwtSigningKey = []byte(secret)
-		g.Log().Info(ctx, "JWT签名密钥加载完成")
-	})
 }
 
 func Newtoken() *sToken {
 	return &sToken{}
 }
 
+// GenToken 生成并返回token
 func (s *sToken) GenToken(ctx context.Context, username string, expire time.Duration) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Issuer:    "gdtzSLMDP",
 		Subject:   username,
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 		NotBefore: jwt.NewNumericDate(time.Now()),
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expire)),
 	})
-
-	tokenString, err := token.SignedString(jwtSigningKey)
+	signingKey, err := s.generateRandomKey(32)
 	if err != nil {
-		glog.Error(ctx, "token generate error")
+		g.Log().Error(ctx, "siginingKey gen error")
 		return "", err
 	}
 
+	g.Log().Info(ctx, "token fine here")
+	tokenString, err := token.SignedString(signingKey)
 	s.AddToken(tokenString, &model.TokenInfo{
-		SigningKey: nil,
+		SigningKey: signingKey,
 		Username:   username,
 	}, expire)
-
-	g.Log().Info(ctx, "token生成成功")
+	if err != nil {
+		glog.Error(ctx, "token generate error")
+	}
 	return tokenString, err
 }
 
+// generateRandomKey 随机生成密钥
 func (s *sToken) generateRandomKey(length int) ([]byte, error) {
 	key := make([]byte, length)
 	_, err := rand.Read(key)
@@ -85,40 +65,45 @@ func (s *sToken) generateRandomKey(length int) ([]byte, error) {
 	return key, nil
 }
 
+// ValidateToken 验证token
 func (s *sToken) ValidateToken(ctx context.Context, tokenString string) (bool, error) {
-	exist, err := dao.Redis.IsExist(ctx, tokenString)
+	// g.Log().Debug(ctx, "validating token", tokenString)
+	ok := false
+	signKey, err := s.GetSigningKey(tokenString)
+	// g.Log().Debug(ctx, "got signing key", signKey)
 	if err != nil {
 		return false, err
 	}
-	if !exist {
-		return false, gerror.New("token已失效或不存在")
-	}
-
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		if token.Method.Alg() != "HS256" {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return jwtSigningKey, nil
+		return signKey, nil
 	})
 	if err != nil {
-		if errors.Is(err, jwt.ErrTokenExpired) {
-			_ = s.DelToken(tokenString)
-			g.Log().Info(ctx, "token已过期，已清理")
-		}
+		g.Log().Error(ctx, "token parse error")
 		return false, err
 	}
-	if !token.Valid {
-		return false, nil
+	if token.Valid {
+		ok = true
+	} else if errors.Is(err, jwt.ErrTokenExpired) {
+		err = s.DelToken(tokenString)
+		if err != nil {
+			g.Log().Debug(ctx, "token清理失败")
+		}
+		ok = false
 	}
-	return true, nil
+	g.Log().Debug(ctx, "validation over")
+	return ok, err
 }
 
+// AddToken 将生成的tokenStirng加入redis
 func (s *sToken) AddToken(tokenString string, in *model.TokenInfo, expire time.Duration) error {
 	err := dao.Redis.Set(context.Background(), in.Username, tokenString, expire)
 	if err != nil {
 		return err
 	}
-	err = dao.Redis.Set(context.Background(), tokenString, in.Username, expire)
+	err = dao.Redis.Set(context.Background(), tokenString, in.SigningKey, expire)
 	if err != nil {
 		return err
 	}
@@ -157,12 +142,19 @@ func (s *sToken) DelToken(tokenString string) error {
 	return nil
 }
 
+// GetUser 获取token中的用户名
 func (s *sToken) GetUser(tokenString string) (username string, err error) {
+	g.Log().Debug(context.Background(), "enter GetUser")
+	signKey, err := s.GetSigningKey(tokenString)
+	if err != nil {
+		return "", err
+	}
+
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		if token.Method.Alg() != "HS256" {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return jwtSigningKey, nil
+		return signKey, nil
 	})
 	if err != nil {
 		return "", err

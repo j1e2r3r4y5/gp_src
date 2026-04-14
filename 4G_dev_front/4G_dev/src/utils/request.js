@@ -20,13 +20,15 @@ service.interceptors.request.use(config => {
 // 响应拦截器：token失效时提示并跳转登录
 service.interceptors.response.use(
     response => {
+        // 这里假设后端返回的未登录/掉线状态码为401或自定义code
         if (response.data && (
-            response.data.code === 401 ||
-            response.data.code === 66 ||
+            // response.data.code === 401 ||
+            response.data.code === 66 || // gcode.CodeInvalidRequest.Code() 可能为 1001
             response.data.message === '未登录' ||
             response.data.message === 'token已失效' ||
             response.data.message === '未登录或登录过期，请重新登陆'
         )) {
+            // 弹窗提示
             if (window.ElMessage) {
                 window.ElMessage.error('登录已失效，请重新登录')
             } else {

@@ -46,7 +46,7 @@ var (
 				group.Bind(controller.Admin.Permuser)
 				group.Bind(controller.Admin.Register)
 			})
-			service.Mqtt().Init() // 初始化 MQTT 客户端
+			// service.Mqtt().Init() // 初始化 MQTT 客户端
 			s.Run()
 			return nil
 		},

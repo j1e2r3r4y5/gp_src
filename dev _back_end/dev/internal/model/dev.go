@@ -2,28 +2,28 @@ package model
 
 type Device struct {
 	ID           int    `json:"id"`
-	Devname      string `json:"name"`
-	DevSerial    string `json:"serial"`
-	DevLocation  string `json:"location"`
-	DevStatus    int    `json:"status"`
-	LatestOnline string `json:"latest_online"`
+	Devname      string `json:"name"`          //设备名称
+	DevSerial    string `json:"serial"`        //设备序列号
+	DevLocation  string `json:"location"`      //设备位置
+	DevStatus    string `json:"status"`        //设备状态
+	LatestOnline string `json:"latest_online"` //设备最近在线时间
 	Sendmodel    string `json:"sendmodel"`
-	Configdata   string `json:"configdata"`
-	Baud         string `json:"baud"`
-	Changeflag   int    `json:"chengeFlag"`
-	SuccessFlag  int    `json:"successFlag"`
+	Configdata   string `json:"configdata"`  //数据配置
+	Baud         string `json:"baud" `       //波特率
+	Changeflag   int    `json:"chengeFlag"`  //变更标志
+	SuccessFlag  int    `json:"successFlag"` //成功标志
 }
 type AddDevice struct {
-	Devname      string `json:"name"`
-	DevSerial    string `json:"serial"`
-	DevLocation  string `json:"location"`
-	DevStatus    int    `json:"status"`
-	LatestOnline string `json:"latest_online"`
+	Devname      string `json:"name"`          //设备名称
+	DevSerial    string `json:"serial"`        //设备序列号
+	DevLocation  string `json:"location"`      //设备位置
+	DevStatus    string `json:"status"`        //设备状态
+	LatestOnline string `json:"latest_online"` //设备最近在线时间
 	Sendmodel    string `json:"sendmodel"`
-	Configdata   string `json:"configdata"`
-	Baud         string `json:"baud"`
-	Changeflag   int    `json:"chengeFlag"`
-	SuccessFlag  int    `json:"successFlag"`
+	Configdata   string `json:"configdata"`  //数据配置
+	Baud         string `json:"baud" `       //波特率
+	Changeflag   int    `json:"chengeFlag"`  //变更标志
+	SuccessFlag  int    `json:"successFlag"` //成功标志
 }
 type Failed struct {
 	DevName   string `json:"devName"`
@@ -37,15 +37,16 @@ type DeviceCreateListInput struct {
 	Devices []*AddDevice `json:"devices"`
 }
 type ModifyDeviceInput struct {
-	ID           int    `json:"id"`
-	Devname      string `json:"name"`
-	DevSerial    string `json:"serial"`
-	DevLocation  string `json:"location"`
-	DevStatus    int    `json:"status"`
-	LatestOnline string `json:"latest_online"`
+	ID           int    `json:"id"`            //设备ID
+	Devname      string `json:"name"`          //设备名称
+	DevSerial    string `json:"serial"`        //设备序列号
+	DevLocation  string `json:"location"`      //设备位置
+	DevStatus    string `json:"status"`        //设备状态
+	LatestOnline string `json:"latest_online"` //设备最近在线时间
 	Sendmodel    string `json:"sendmodel"`
-	Configdata   string `json:"configdata"`
-	Baud         string `json:"baud"`
+	Configdata   string `json:"configdata"` //数据配置
+	Baud         string `json:"baud" `      //波特率
+
 }
 type RemoveDeviceInput struct {
 	Idlist []int `json:"idlist"` //设备ID列表

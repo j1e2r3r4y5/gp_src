@@ -8,7 +8,6 @@ import (
 	scanner "dev/utility"
 	"encoding/hex"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -70,9 +69,7 @@ func (s *sPayload) PayloadHandler(ctx context.Context, devSerial string, payload
 			DevStatus:    devStatus,
 			LatestOnline: gtime.Now(),
 		}
-		// BL-01修复：心跳包不再写入InfluxDB，减少数据膨胀
-		// 心跳状态已保存在MySQL的dev表中，InfluxDB主要用于存储设备采集的时序数据
-		// WriteDevUpdateToInflux(ctx, org, bucket, DevUpdate, Featurescode)
+		WriteDevUpdateToInflux(ctx, org, bucket, DevUpdate, Featurescode)
 		fmt.Printf("心跳包: %s, 状态: %d\n", devSerial, devStatus)
 		return false, Featurescode, DevUpdate, nil, nil
 	case "01": // 上发模组配置
@@ -150,41 +147,18 @@ func (s *sPayload) PayloadHandler(ctx context.Context, devSerial string, payload
 			g.Log().Error(ctx, "解析数据区总长度失败", err)
 			return false, 0, nil, nil, err
 		}
-		if len(lenBytes) < 2 {
-			g.Log().Error(ctx, "数据区长度字节不足")
-			return false, 0, nil, nil, fmt.Errorf("数据区长度字节不足")
-		}
 		totalLen := int(lenBytes[0])<<8 | int(lenBytes[1])
 		g.Log().Debug(ctx, "数据区总长度", totalLen)
 
-		if totalLen < 3 {
-			g.Log().Error(ctx, "数据区总长度非法，太小")
-			return false, 0, nil, nil, fmt.Errorf("数据区总长度非法")
-		}
+		// 已经读取了3字节（功能码+长度），还剩totalLen-3字节为数据项
 		dataItemBytes := totalLen - 3
 		readBytes := 0
 		index := 0
 		for readBytes+6 <= dataItemBytes {
-			slaveAddr, err := scanner.Next(1)
-			if err != nil || len(slaveAddr) < 1 {
-				g.Log().Error(ctx, "解析从站地址失败", err)
-				break
-			}
-			dataType, err := scanner.Next(1)
-			if err != nil || len(dataType) < 1 {
-				g.Log().Error(ctx, "解析数据类型失败", err)
-				break
-			}
-			dataAddr, err := scanner.Next(2)
-			if err != nil || len(dataAddr) < 2 {
-				g.Log().Error(ctx, "解析数据地址失败", err)
-				break
-			}
-			dataLen, err := scanner.Next(2)
-			if err != nil || len(dataLen) < 2 {
-				g.Log().Error(ctx, "解析数据长度失败", err)
-				break
-			}
+			slaveAddr, _ := scanner.Next(1)
+			dataType, _ := scanner.Next(1)
+			dataAddr, _ := scanner.Next(2)
+			dataLen, _ := scanner.Next(2)
 			readBytes += 6
 
 			g.Log().Debug(ctx, "数据配置项", index,
@@ -200,6 +174,7 @@ func (s *sPayload) PayloadHandler(ctx context.Context, devSerial string, payload
 			DevSerial:    devSerial,
 			DevStatus:    1,
 			LatestOnline: gtime.Now(),
+			// Success:      s.BytesToString(Success),
 		}
 		return false, Featurescode, DevUpdate, nil, nil
 	case "04": // 上发设备日志
@@ -282,42 +257,18 @@ func (s *sPayload) PayloadHandler(ctx context.Context, devSerial string, payload
 			g.Log().Error(ctx, "解析数据区总长度失败", err)
 			return false, 0, nil, nil, err
 		}
-		if len(lenBytes) < 2 {
-			g.Log().Error(ctx, "数据区长度字节不足")
-			return false, 0, nil, nil, fmt.Errorf("数据区长度字节不足")
-		}
 		totalLen := int(lenBytes[0])<<8 | int(lenBytes[1])
 		g.Log().Debug(ctx, "数据区总长度", totalLen)
-
-		if totalLen < 3 {
-			g.Log().Error(ctx, "数据区总长度非法，太小")
-			return false, 0, nil, nil, fmt.Errorf("数据区总长度非法")
-		}
-		// BL-02修复：添加数据长度边界检查
+		// 已经读取了3字节（功能码+长度），还剩totalLen-3字节为数据项
 		dataItemBytes := totalLen - 3
 		readBytes := 0
+		// index := 0
 		for readBytes+6 <= dataItemBytes {
-			slaveAddr, err := scanner.Next(1)
-			if err != nil || len(slaveAddr) < 1 {
-				g.Log().Error(ctx, "解析从站地址失败", err)
-				break
-			}
-			ModbusType, err := scanner.Next(1)
-			if err != nil || len(ModbusType) < 1 {
-				g.Log().Error(ctx, "解析Modbus类型失败", err)
-				break
-			}
-			dataAddr, err := scanner.Next(2)
-			if err != nil || len(dataAddr) < 2 {
-				g.Log().Error(ctx, "解析数据地址失败", err)
-				break
-			}
-			dataLen, err := scanner.Next(2)
-			if err != nil || len(dataLen) < 2 {
-				g.Log().Error(ctx, "解析数据长度失败", err)
-				break
-			}
-			length := int(dataLen[0])<<8 | int(dataLen[1])
+			slaveAddr, _ := scanner.Next(1)
+			ModbusType, _ := scanner.Next(1)
+			dataAddr, _ := scanner.Next(2)
+			dataLen, _ := scanner.Next(2)
+			length := int(dataLen[0])<<8 | int(dataLen[1]) // 大端
 
 			var valueLen int
 			switch ModbusType[0] {
@@ -325,30 +276,14 @@ func (s *sPayload) PayloadHandler(ctx context.Context, devSerial string, payload
 				valueLen = (length + 7) / 8
 			case 3, 4:
 				valueLen = length * 2
-			default:
-				g.Log().Error(ctx, "未知的Modbus类型", ModbusType[0])
-				break
 			}
-
-			if valueLen <= 0 || valueLen > 256 {
-				g.Log().Error(ctx, "计算的数据值长度非法", valueLen)
-				break
-			}
-
-			dataValue, err := scanner.Next(valueLen)
-			if err != nil || len(dataValue) < valueLen {
-				g.Log().Error(ctx, "解析数据值失败", err)
-				break
-			}
+			dataValue, _ := scanner.Next(valueLen)
 			readBytes += 6 + valueLen
 
 			baseAddr := int(dataAddr[0])<<8 | int(dataAddr[1])
 
 			if ModbusType[0] == 1 || ModbusType[0] == 2 {
-				if length > 2048 {
-					g.Log().Error(ctx, "线圈数量过大", length)
-					break
-				}
+				// 线圈，按位拆分
 				for i := 0; i < length; i++ {
 					byteIndex := i / 8
 					bitOffset := i % 8
@@ -366,10 +301,7 @@ func (s *sPayload) PayloadHandler(ctx context.Context, devSerial string, payload
 					}
 				}
 			} else if ModbusType[0] == 3 || ModbusType[0] == 4 {
-				if length > 128 {
-					g.Log().Error(ctx, "寄存器数量过大", length)
-					break
-				}
+				// 寄存器，按2字节拆分
 				for i := 0; i < length; i++ {
 					offset := i * 2
 					if offset+1 < len(dataValue) {
@@ -392,6 +324,7 @@ func (s *sPayload) PayloadHandler(ctx context.Context, devSerial string, payload
 			DevSerial:    devSerial,
 			DevStatus:    1,
 			LatestOnline: gtime.Now(),
+			// Success:      s.BytesToString(Success),
 		}
 		return false, Featurescode, DevUpdate, nil, nil
 	}
@@ -421,20 +354,10 @@ func (s *sPayload) DownPayloadHandler(ctx context.Context, topic string, code []
 		mqttClient.Publish(topic, 0, false, code)
 	case "04": // 下发设备日志
 		g.Log().Info(ctx, "下发设备日志")
-		if len(code) < 2 {
-			g.Log().Error(ctx, "下发的日志内容为空")
-			return fmt.Errorf("下发的日志内容为空")
-		}
 		logContent := s.BytesToString([]byte{code[1]})
 		g.Log().Debug(ctx, "设备日志内容", logContent)
 		mqttClient.Publish(topic, 0, false, code)
-		// BL-06修复：topic解析添加越界检查
-		devSerial, err := s.parseTopicSafe(topic)
-		if err != nil {
-			g.Log().Error(ctx, "解析设备序列号失败", err)
-			return err
-		}
-		_, err = dao.Dev.Ctx(ctx).Where(dao.Dev.Columns().DevSerial, devSerial).Data(g.Map{
+		_, err = dao.Dev.Ctx(ctx).Where(dao.Dev.Columns().DevSerial, strings.Split(topic, "/")[2]).Data(g.Map{
 			"SuccessFlag": 1,
 		}).Update()
 		if err != nil {
@@ -447,19 +370,6 @@ func (s *sPayload) DownPayloadHandler(ctx context.Context, topic string, code []
 	return
 }
 
-// BL-06修复：安全的topic解析，使用正则表达式
-func (s *sPayload) parseTopicSafe(topic string) (string, error) {
-	if topic == "" {
-		return "", fmt.Errorf("topic为空")
-	}
-	re := regexp.MustCompile(`/dtu/([0-9A-Fa-f]+)`)
-	match := re.FindStringSubmatch(topic)
-	if len(match) < 2 {
-		return "", fmt.Errorf("无法解析设备序列号: %s", topic)
-	}
-	return match[1], nil
-}
-
 // BytesToUpperCaseString bytes转大写string
 func (s *sPayload) BytesToString(data []byte) string {
 	hexData := hex.EncodeToString(data)
@@ -468,15 +378,11 @@ func (s *sPayload) BytesToString(data []byte) string {
 }
 
 // IsHeartBeat 判断是否为心跳包，并返回设备状态
-// BL-07修复：修正返回值逻辑，返回(bool, byte)表示(是否为心跳, 功能码)
-func (s *sPayload) IsHeartBeat(data []byte) (bool, byte) {
-	if len(data) < 1 {
-		return false, 0
-	}
+func (s *sPayload) IsHeartBeat(data []byte) (int, byte) {
 	if s.BytesToString(data) == "00" {
-		return true, 0x00
+		return 1, 0x00
 	}
-	return false, data[0]
+	return 1, 00
 }
 
 // HexStringToBytes 十六进制字符串转[]byte
@@ -491,10 +397,9 @@ func WriteDevUpdateToInflux(ctx context.Context, org, bucket string, devUpdate *
 		"dev_serial":    devUpdate.DevSerial,
 		"features_code": fmt.Sprintf("%d", featuresCode),
 	}
-	var fields map[string]interface{}
 	switch featuresCode {
-	case 0x00:
-		fields = map[string]interface{}{
+	case 0x00: // 心跳包
+		fields := map[string]interface{}{
 			"dev_status":    devUpdate.DevStatus,
 			"latest_online": devUpdate.LatestOnline.String(),
 			"send_model":    devUpdate.Sendmodel,
@@ -502,8 +407,11 @@ func WriteDevUpdateToInflux(ctx context.Context, org, bucket string, devUpdate *
 			"baud":          devUpdate.Baud,
 			"success":       devUpdate.Success,
 		}
-	case 0x01:
-		fields = map[string]interface{}{
+		point := write.NewPoint("Featurescode", tags, fields, time.Now())
+		writeAPI.WritePoint(ctx, point)
+		return nil
+	case 0x01: // 模组配置
+		fields := map[string]interface{}{
 			"send_model":    devUpdate.Sendmodel,
 			"config_data":   devUpdate.Configdata,
 			"baud":          devUpdate.Baud,
@@ -511,36 +419,29 @@ func WriteDevUpdateToInflux(ctx context.Context, org, bucket string, devUpdate *
 			"dev_status":    devUpdate.DevStatus,
 			"success":       devUpdate.Success,
 		}
-	case 0x02:
-		fields = map[string]interface{}{
+		point := write.NewPoint("Featurescode", tags, fields, time.Now())
+		writeAPI.WritePoint(ctx, point)
+		return nil
+	case 0x02: // 设备配置
+		fields := map[string]interface{}{
 			"success":       devUpdate.Success,
 			"dev_status":    devUpdate.DevStatus,
 			"send_model":    devUpdate.Sendmodel,
 			"config_data":   devUpdate.Configdata,
 			"latest_online": devUpdate.LatestOnline.String(),
 		}
-	default:
-		fields = map[string]interface{}{
-			"dev_status": devUpdate.DevStatus,
-		}
-	}
+		point := write.NewPoint("Featurescode", tags, fields, time.Now())
+		g.Log().Info(context.Background(), "写入时序数据库", devUpdate)
+		//写入
+		writeAPI.WritePoint(ctx, point)
+		// time.Sleep(250 * time.Millisecond)
+		// QueryDevStatusFromInflux(ctx, org, bucket, devUpdate, featuresCode)
+		return nil
 
-	point := write.NewPoint("Featurescode", tags, fields, time.Now())
-	// BL-10修复：添加错误处理和重试机制
-	err := writeAPI.WritePoint(ctx, point)
-	if err != nil {
-		g.Log().Error(ctx, "写入InfluxDB失败，重试中...", err)
-		time.Sleep(100 * time.Millisecond)
-		err = writeAPI.WritePoint(ctx, point)
-		if err != nil {
-			g.Log().Error(ctx, "写入InfluxDB重试失败", err)
-			return fmt.Errorf("写入InfluxDB失败: %w", err)
-		}
 	}
 	return nil
 }
 
-// BL-10修复：WritdataToInflux添加完整的错误处理机制
 func WritdataToInflux(ctx context.Context, org, bucket string, DataItem *model.DataItem, featuresCode byte) error {
 	writeAPI := InfluxClient.WriteAPIBlocking(org, bucket)
 	tags := map[string]string{
@@ -553,19 +454,8 @@ func WritdataToInflux(ctx context.Context, org, bucket string, DataItem *model.D
 		"datavalue": DataItem.DataValue,
 	}
 	point := write.NewPoint("DataItem", tags, fields, time.Now())
-
-	// BL-10修复：添加错误处理和重试机制
-	err := writeAPI.WritePoint(ctx, point)
-	if err != nil {
-		g.Log().Error(ctx, "写入InfluxDB DataItem失败，重试中...", err)
-		time.Sleep(100 * time.Millisecond)
-		err = writeAPI.WritePoint(ctx, point)
-		if err != nil {
-			g.Log().Error(ctx, "写入InfluxDB DataItem重试失败", err)
-			return fmt.Errorf("写入InfluxDB DataItem失败: %w", err)
-		}
-	}
-	g.Log().Debug(ctx, "写入时序数据库成功", DataItem)
+	writeAPI.WritePoint(ctx, point)
+	g.Log().Info(ctx, "写入时序数据库成功", DataItem)
 	return nil
 }
 

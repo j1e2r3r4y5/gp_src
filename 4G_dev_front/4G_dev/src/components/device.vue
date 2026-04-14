@@ -260,7 +260,7 @@ async function fetchDeviceList() {
             name: item.Devname || item.name || '',
             sn: item.DevSerial || item.serial || '',
             location: item.DevLocation || item.location || '',
-            status: item.DevStatus === 1 ? '在线' : '离线',
+            status: item.DevStatus === 1 || item.DevStatus === '1' || item.status === 1 || item.status === '1' ? '在线' : '离线',
             lastOnline: item.LatestOnline || item.latest_online || '无记录',
             sendmodel: item.Sendmodel || item.sendmodel || item.send_model || '',
             config: item.Config || item.config || item.configdata || '',

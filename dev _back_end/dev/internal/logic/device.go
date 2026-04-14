@@ -6,7 +6,6 @@ import (
 	"dev/internal/model"
 	"dev/internal/service"
 
-	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 )
@@ -61,7 +60,7 @@ func (s *sDevice) AddDevice(ctx context.Context, device *model.AddDevice) (out *
 		dao.Dev.Columns().Sendmodel:    device.Sendmodel,
 		dao.Dev.Columns().Baud:         device.Baud,
 		dao.Dev.Columns().Changeflag:   0,
-		dao.Dev.Columns().Successflag:  0,
+		dao.Dev.Columns().Changeflag:   0,
 		dao.Dev.Columns().LatestOnline: gtime.Now(),
 	}).Insert()
 	if err != nil {
@@ -78,22 +77,19 @@ func (s *sDevice) AddDevice(ctx context.Context, device *model.AddDevice) (out *
 	return
 }
 
+// 检查设备信息是否完整
 func (s *sDevice) Chenckdev(ctx context.Context, dev *model.AddDevice) (bool, string) {
 	g.Log().Info(ctx, "检查设备", dev.Devname)
+	device, _ := dao.Dev.Ctx(ctx).Where(dao.Dev.Columns().Devname, dev.Devname).Count()
+	if device > 0 {
+		g.Log().Info(ctx, "已存在同序列号设备，不能重复添加")
+		return false, "已存在同序列号设备，不能重复添加"
+	}
 	if dev.DevSerial == "" || dev.Devname == "" {
 		g.Log().Info(ctx, "设备信息不完整")
-		return false, "设备序列号和名称不能为空"
+		return false, "设备信息不完整"
 	}
-	serialCount, _ := dao.Dev.Ctx(ctx).Where(dao.Dev.Columns().DevSerial, dev.DevSerial).Count()
-	if serialCount > 0 {
-		g.Log().Info(ctx, "已存在同序列号设备，不能重复添加")
-		return false, "已存在相同序列号设备，不能重复添加"
-	}
-	nameCount, _ := dao.Dev.Ctx(ctx).Where(dao.Dev.Columns().Devname, dev.Devname).Count()
-	if nameCount > 0 {
-		g.Log().Info(ctx, "已存在同名称设备")
-		return false, "已存在相同名称设备，请更换名称"
-	}
+	//地区检测暂时保留
 	return true, ""
 }
 
@@ -120,21 +116,19 @@ func (s *sDevice) ModifyDevice(ctx context.Context, input *model.ModifyDeviceInp
 	return
 }
 
+// 删除设备实现
 func (s *sDevice) RemoveDevice(ctx context.Context, id model.RemoveDeviceInput) (err error) {
+	//删除log记录（暂时没有）
+	//删除设备
 	if len(id.Idlist) == 0 {
-		return gerror.New("设备ID列表不能为空")
-	}
-	_, err = dao.Caching.Ctx(ctx).WhereIn("dev_ID", id.Idlist).Delete()
-	if err != nil {
-		g.Log().Warning(ctx, "删除设备关联缓存失败", err)
+		g.Log().Info(ctx, "设备ID列表不能为空")
 	}
 	_, err = dao.Dev.Ctx(ctx).WhereIn(dao.Dev.Columns().Id, id.Idlist).Delete()
 	if err != nil {
 		g.Log().Error(ctx, "删除设备失败", err)
-		return gerror.New("删除设备失败")
 	}
-	g.Log().Info(ctx, "删除设备成功，关联数据已清理")
-	return nil
+	g.Log().Info(ctx, "删除设备成功")
+	return
 }
 
 // 获取所有设备列表
