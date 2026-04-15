@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"crypto/md5"
 	"dev/internal/dao"
 	"dev/internal/model"
 	"dev/internal/service"
@@ -20,6 +21,10 @@ var (
 	mqttClient mqtt.Client
 
 	SubscribedDevIds = make([]uint64, 0)
+
+	reconnectAttempts    = 0
+	maxReconnectAttempts = 10
+	baseReconnectDelay   = time.Second
 )
 
 type sMqtt struct {
@@ -39,21 +44,49 @@ func (s *sMqtt) Init() {
 	opts.SetCleanSession(g.Cfg().MustGet(context.Background(), "mqtt.cleanSession").Bool())
 	opts.SetUsername(g.Cfg().MustGet(context.Background(), "mqtt.username").String())
 	opts.SetPassword(g.Cfg().MustGet(context.Background(), "mqtt.password").String())
+	opts.SetAutoReconnect(true)
+	opts.SetConnectRetry(true)
+	opts.SetConnectRetryInterval(5 * time.Second)
 	opts.OnConnect = func(c mqtt.Client) {
-		fmt.Println("连接成功")
+		fmt.Println("MQTT连接成功")
+		reconnectAttempts = 0
 		s.subscribeAll(context.Background())
+	}
+	opts.OnConnectionLost = func(c mqtt.Client, err error) {
+		g.Log().Warning(context.Background(), "MQTT连接断开: ", err)
+		go s.handleReconnect()
 	}
 	mqttClient = mqtt.NewClient(opts)
 
 	if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
 		g.Log().Panic(context.Background(), token.Error())
 	}
+}
 
-	// err := s.RefreshDeviceTopics(context.Background())
-	// if err != nil {
-	// 	g.Log().Debug(context.Background(), "RefreshDeviceTopics error", err)
-	// }
-	// g.Log().Info(context.Background(), "mqtt client initialization completed.")
+// BL-04修复：实现自动重连机制
+func (s *sMqtt) handleReconnect() {
+	for reconnectAttempts < maxReconnectAttempts {
+		reconnectAttempts++
+		delay := baseReconnectDelay * time.Duration(1<<uint(reconnectAttempts))
+		if delay > time.Minute {
+			delay = time.Minute
+		}
+		g.Log().Info(context.Background(), "尝试MQTT重连 (", reconnectAttempts, "/", maxReconnectAttempts, "), 等待 ", delay)
+		time.Sleep(delay)
+
+		if mqttClient.IsConnected() {
+			g.Log().Info(context.Background(), "MQTT重连成功")
+			return
+		}
+
+		if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
+			g.Log().Error(context.Background(), "MQTT重连失败: ", token.Error())
+		} else {
+			g.Log().Info(context.Background(), "MQTT重连成功")
+			return
+		}
+	}
+	g.Log().Error(context.Background(), "MQTT重连次数已达上限，请检查网络或服务器状态")
 }
 
 // getUPTopic 获得指定设备的上行主题
@@ -86,17 +119,26 @@ func (s *sMqtt) subscribeAll(ctx context.Context) error {
 }
 
 func (s *sMqtt) messageHandler(ctx context.Context, c mqtt.Client, msg mqtt.Message) error {
-	// 处理接收到的消息
 	fmt.Printf("[%s] 主题: %s | 消息: %2x\n",
 		time.Now().Format("15:04:05"),
 		msg.Topic(),
 		string(msg.Payload()))
+
+	// BL-05修复：实现消息去重，基于消息内容和时间窗口
+	payloadHash := fmt.Sprintf("%x", md5.Sum(msg.Payload()))
+	dedupKey := fmt.Sprintf("mqtt:dedup:%s:%s", msg.Topic(), payloadHash)
+	exists, _ := dao.Redis.IsExist(ctx, dedupKey)
+	if exists {
+		g.Log().Debug(ctx, "重复消息，忽略")
+		return nil
+	}
+	dao.Redis.Set(ctx, dedupKey, "1", time.Minute*5)
+
 	serial, err := s.fetchDeviceSerial(msg)
 	if err != nil {
 		g.Log().Error(ctx, "无法提取设备序列号", err)
 		return err
 	}
-	// 解析消息
 	isRepeat, Featurescode, DevUpdate, LogUpdate, err := service.Payload().PayloadHandler(ctx, serial, msg.Payload())
 	if err != nil {
 		g.Log().Error(ctx, "PayloadHandler error", err)

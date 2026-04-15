@@ -53,23 +53,20 @@ func (s *sMiddleware) RateLimitMiddleware(r *ghttp.Request) {
 	r.Middleware.Next()
 }
 
-// 前台系统权限控制，用户必须登录才能访问
 func (s *sMiddleware) Auth(r *ghttp.Request) {
 	tokenString := r.Header.Get("Authorization")
 	tokenString = strings.TrimPrefix(tokenString, "Bearer ")
-	g.Log().Info(r.GetCtx(), "Auth check, tokenString:", tokenString)
 	ok, err := service.Token().ValidateToken(r.Context(), tokenString)
 	if err != nil {
-		g.Log().Info(r.Context(), "未登录")
+		g.Log().Info(r.Context(), "token验证失败:", err)
 	}
 	if ok {
 		r.Middleware.Next()
 	} else {
-		g.Log().Info(r.GetCtx(), "go, go another land")
 		r.Response.WriteJson(DefaultHandlerResponse{
-			Code:    gcode.CodeInvalidRequest.Code(),
+			Code:    401,
 			Message: "未登录或登录过期，请重新登陆",
-			Data:    "请先登录",
+			Data:    nil,
 		})
 	}
 }

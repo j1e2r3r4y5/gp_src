@@ -8,7 +8,6 @@ import (
 	"dev/internal/model/entity"
 	"dev/internal/service"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/gogf/gf/v2/crypto/gmd5"
@@ -75,23 +74,27 @@ func (s *sUser) UserLogin(ctx context.Context, in model.User) (ok bool, out *mod
 		return false, out, gerror.New("账号或密码错误2")
 	}
 
+	// BL-03修复：检查是否存在有效token，若存在则直接复用，避免重复生成
 	tokenString, err := service.Token().NoRepeatLogin(ctx, in.Username)
 	if err != nil {
 		return false, nil, gerror.New("repeat check error")
 	}
 	if tokenString != "" {
+		// 已有有效token，直接返回
 		out = &model.UserLoginOutput{
 			Type:        one.Type,
 			TokenString: tokenString,
 		}
+		return true, out, nil
 	}
-	tokenString, err = service.Token().GenToken(ctx, in.Username, time.Hour*24) // 单位：小时
+
+	// 无有效token，生成新token
+	tokenString, err = service.Token().GenToken(ctx, in.Username, time.Hour*24)
 	if err != nil {
 		g.Log().Info(ctx, "no token")
 		return false, nil, gerror.New("token generate error")
 	}
 	g.Log().Info(ctx, "this is the tokenString: %s", tokenString)
-	// 前端可以获得用户类型
 	out = &model.UserLoginOutput{
 		Type:        one.Type,
 		TokenString: tokenString,
@@ -144,16 +147,17 @@ func (s *sUser) Modifyuser(ctx context.Context, ID int, oldpawssord string, newp
 func (s *sUser) Permuser(ctx context.Context, ID int, Type int, currentUserType int) error {
 	var user *model.User
 	err := dao.User.Ctx(ctx).Where("id", ID).Scan(&user)
-	if err != nil {
+	if err != nil || user == nil {
 		return gerror.New("用户不存在")
 	}
-	if currentUserType != 0 && currentUserType != 1 { // 如果是管理员
-		fmt.Println("当前用户权限", currentUserType)
-		return gerror.New("非管理员不能修改权限")
+	if currentUserType != 0 {
+		return gerror.New("只有超级管理员可以修改用户权限")
 	}
-	// 更新权限
+	if ID == ctx.Value("userId") {
+		return gerror.New("不能修改自己的权限")
+	}
 	_, err = dao.User.Ctx(ctx).Where("id", ID).Data(do.User{
-		Type: Type, // 设置类型
+		Type: Type,
 	}).Update()
 	if err != nil {
 		return gerror.New("修改权限失败")

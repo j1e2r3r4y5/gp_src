@@ -18,9 +18,6 @@ import (
 )
 
 func main() {
-	ctx := gctx.GetInitCtx()
-	g.Log().Info(ctx, "Starting backend server...")
-
 	go func() {
 		ticker := time.NewTicker(time.Minute / 2)
 		defer ticker.Stop()
@@ -36,8 +33,11 @@ func main() {
 			}
 		}
 	}()
-
-	g.Log().Info(ctx, "Running main command...")
-	cmd.Main.Run(ctx)
-	g.Log().Info(ctx, "Server stopped")
+	// token := os.Getenv("INFLUXDB_TOKEN")
+	// url := "http://172.12.0.219:8086"
+	// client := influxdb2.NewClient(url, token)
+	// defer client.Close()
+	// service.Device().GetDevicelist(gctx.GetInitCtx())
+	// service.Data().GetData(gctx.GetInitCtx())
+	cmd.Main.Run(gctx.GetInitCtx())
 }
